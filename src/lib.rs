@@ -2,6 +2,10 @@
 
 #![deny(missing_docs)]
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::io;
+
+type Result<T> = std::result::Result<T, io::Error>;
 
 /// KvStore holds an in-memory HashMap of <String, String>
 pub struct KvStore {
@@ -30,10 +34,7 @@ impl KvStore {
     /// assert_eq!(k.get("no".to_owned()), None);
     /// ```
     pub fn get(&self, key: String) -> Option<String> {
-        match self.map.get(&key) {
-            Some(v) => Some(v.clone()),
-            None => None,
-        }
+        self.map.get(&key).cloned()
     }
 
     /// Inserts an item or updates an existing item in the store
@@ -57,5 +58,10 @@ impl KvStore {
     /// ```
     pub fn remove(&mut self, key: String) {
         self.map.remove(&key);
+    }
+
+    /// Opens the KvStore at a given path. Return the KvStore
+    pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
+        Ok(KvStore::new())
     }
 }
