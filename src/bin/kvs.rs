@@ -1,5 +1,5 @@
-use structopt::StructOpt;
 use kvs::Result;
+use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "kvs")]
@@ -17,7 +17,7 @@ enum KvsOpts {
     Rm {
         #[structopt(required = true)]
         key: String,
-    }
+    },
 }
 
 fn main() -> Result<()> {

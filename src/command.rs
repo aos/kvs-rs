@@ -8,6 +8,4 @@ pub enum Operation {
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct Command {
-    op: Operation
-}
+pub struct Command(pub Operation);

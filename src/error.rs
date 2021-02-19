@@ -1,3 +1,4 @@
+use serde_json;
 use std::io;
 use std::time::SystemTimeError;
 use thiserror::Error;
@@ -8,6 +9,8 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error(transparent)]
     Time(#[from] SystemTimeError),
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
 }
 
 /// The Result type encapsulates standard result

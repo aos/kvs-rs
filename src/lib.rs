@@ -1,16 +1,18 @@
 //! This library houses a key-value store
 
-mod error;
 mod command;
+mod error;
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::fs::{self, File, OpenOptions};
-use std::time::{SystemTime, UNIX_EPOCH};
+use command::{Command, Operation};
 pub use error::Result;
-use command::Command;
+use std::collections::HashMap;
+use std::fs::{self, File, OpenOptions};
+use std::io::prelude::*;
+use std::io::SeekFrom;
+use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-const EXT: &str = ".kvstore"; // {timestamp}.kvstore
+const BUCKET_EXT: &str = "kvstore"; // {timestamp}.kvstore
 
 /// KvStore holds an in-memory HashMap of <String, String>
 pub struct KvStore {
@@ -54,10 +56,19 @@ impl KvStore {
     /// k.set("hi".to_owned(), "bye".to_owned());
     /// ```
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        self.map.insert(key, value);
+        self.map.insert(key.clone(), value.clone());
         // writes should be write-through:
-        // update the in-memory map + the file on disk
-        // worst-case scenario we can buffer it?
+        // update the in-memory map + the file on disk at the same time (not atomic)
+        // TODO: consider buffering
+        serde_json::to_writer(&self.active_file, &Command(Operation::Set(key, value)))?;
+        writeln!(self.active_file)?;
+        // This is written (on multiple operations):
+        // {"Set":["key1","value1"]}\n{"Set":["key2","value2"]}
+        //let mut buf = String::new();
+        //self.active_file.seek(SeekFrom::Start(0))?;
+        //self.active_file.read_to_string(&mut buf)?;
+
+        //println!("We read: {}", buf);
         Ok(())
     }
 
@@ -76,28 +87,31 @@ impl KvStore {
 
     /// Opens the KvStore at a given path. Return the KvStore
     pub fn open(dir: impl Into<PathBuf>) -> Result<KvStore> {
-        // 1. check to see if an existing file is available here
+        // 1. check to see if an existing file is available in dir
         // 2. if available, open it and slurp into memory (for now we will not buffer)
         //      - otherwise, create a new one
         let current_dir: PathBuf = dir.into();
         let maybe_latest = fs::read_dir(&current_dir)?
             .filter_map(|e| e.ok())
             .filter(|e| {
-                if let Ok(file_type) = e.file_type() {
-                    file_type.is_file() && e.path().extension().map_or(false, |e| e == "kvstore")
-                } else {
-                    false
-                }
+                e.file_type().map_or(false, |ft| ft.is_file())
+                    && e.path().extension().map_or(false, |e| e == BUCKET_EXT)
             })
-        .max_by_key(|e| {
-            e.file_name().to_str().map_or(0, |e| {
-                e.split(".").next().map_or(0, |v| v.parse::<usize>().unwrap_or(0))
-            })
-        });
+            .max_by_key(|e| {
+                e.file_name().to_str().map_or(0, |e| {
+                    e.split(".")
+                        .next()
+                        .map_or(0, |v| v.parse::<usize>().unwrap_or(0))
+                })
+            });
 
         let mut file = OpenOptions::new();
         if let Some(found_latest) = maybe_latest {
-            let file: File = file.read(true).append(true).open(found_latest.path())?;
+            let file: File = file
+                .read(true)
+                .append(true)
+                .create(true)
+                .open(found_latest.path())?;
             let mut kv = KvStore::new(current_dir, file);
             let map = HashMap::new();
             // Slurp the serialized data from file into hashmap
@@ -106,7 +120,12 @@ impl KvStore {
             Ok(kv)
         } else {
             let ts = SystemTime::now().duration_since(UNIX_EPOCH)?;
-            let file = file.read(true).append(true).open(format!("{}.kvstore", ts.as_secs()))?;
+            let file = file.read(true).append(true).create(true).open(format!(
+                "{}/{}.{}",
+                current_dir.as_path().display(),
+                ts.as_secs(),
+                BUCKET_EXT
+            ))?;
             Ok(KvStore::new(current_dir, file))
         }
     }
