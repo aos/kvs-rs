@@ -12,7 +12,7 @@ pub enum Error {
     #[error(transparent)]
     Json(#[from] serde_json::Error),
     #[error("Key not found")]
-    InvalidRm,
+    KeyNotFound,
 }
 
 /// The Result type encapsulates standard result

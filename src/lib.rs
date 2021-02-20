@@ -3,12 +3,12 @@
 mod command;
 mod error;
 
-use command::{Command, Operation};
+use command::Command;
 pub use error::{Error, Result};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::prelude::*;
-use std::io::BufReader;
+use std::io::SeekFrom;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -16,7 +16,7 @@ const BUCKET_EXT: &str = "kvstore"; // {timestamp}.kvstore
 
 /// KvStore holds an in-memory HashMap of <String, String>
 pub struct KvStore {
-    map: HashMap<String, String>,
+    map: HashMap<String, usize>,
     dir: PathBuf,
     active_file: File,
 }
@@ -45,7 +45,25 @@ impl KvStore {
     /// assert_eq!(k.get("no".to_owned()), None);
     /// ```
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
-        Ok(self.map.get(&key).cloned())
+        // TODO: Get rid of these "if-let" chains somehow
+        if let Some(offset) = self.map.get(&key) {
+            self.active_file.seek(SeekFrom::Start(*offset as u64))?;
+            let mut it = serde_json::Deserializer::from_reader(&self.active_file).into_iter::<Command>();
+            if let Some(item) = it.next() {
+                match item? {
+                    Command::Set(_, v) => {
+                        Ok(Some(v.to_owned()))
+                    }
+                    _ => {
+                        Ok(None)
+                    }
+                }
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
     }
 
     /// Inserts an item or updates an existing item in the store
@@ -56,11 +74,11 @@ impl KvStore {
     /// k.set("hi".to_owned(), "bye".to_owned());
     /// ```
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        self.map.insert(key.clone(), value.clone());
+        let offset = self.active_file.seek(SeekFrom::Current(0))?;
+        self.map.insert(key.clone(), offset as usize);
         // writes should be write-through:
         // update the in-memory map + the file on disk at the same time (not atomic)
-        // TODO: consider buffering
-        serde_json::to_writer(&self.active_file, &Command(Operation::Set(key, value)))?;
+        serde_json::to_writer(&self.active_file, &Command::Set(key, value))?;
         writeln!(self.active_file)?;
         Ok(())
     }
@@ -74,8 +92,8 @@ impl KvStore {
     /// k.remove("hi".to_owned());
     /// ```
     pub fn remove(&mut self, key: String) -> Result<()> {
-        self.map.remove(&key).ok_or(Error::InvalidRm)?;
-        serde_json::to_writer(&self.active_file, &Command(Operation::Rm(key)))?;
+        self.map.remove(&key).ok_or(Error::KeyNotFound)?;
+        serde_json::to_writer(&self.active_file, &Command::Rm(key))?;
         writeln!(self.active_file)?;
 
         Ok(())
@@ -109,16 +127,23 @@ impl KvStore {
                 .create(true)
                 .open(found_latest.path())?;
             let mut map = HashMap::new();
-            // Slurp the serialized data from file into hashmap
-            for line in BufReader::new(&file).lines() {
-                match serde_json::from_str(&line?)? {
-                    Command(Operation::Set(k, v)) => {
-                        map.insert(k, v);
+            let de = serde_json::Deserializer::from_reader(&file);
+            let mut it = de.into_iter::<Command>();
+            loop {
+                // Slurp the serialized data from file into hashmap
+                let offset = it.byte_offset();
+                if let Some(item) = it.next() {
+                    match item? {
+                        Command::Set(k, _) => {
+                            map.insert(k, offset);
+                        }
+                        Command::Rm(k) => {
+                            map.remove(&k);
+                        }
+                        Command::Get(_) => {}
                     }
-                    Command(Operation::Rm(k)) => {
-                        map.remove(&k);
-                    }
-                    Command(Operation::Get(_)) => {}
+                } else {
+                    break
                 }
             }
 

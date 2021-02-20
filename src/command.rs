@@ -1,11 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
-pub enum Operation {
+#[derive(Debug, Serialize, Deserialize)]
+pub enum Command {
     Set(String, String),
     Get(String),
     Rm(String),
 }
-
-#[derive(Serialize, Deserialize)]
-pub struct Command(pub Operation);
