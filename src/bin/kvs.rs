@@ -1,4 +1,5 @@
-use kvs::Result;
+use kvs::{KvStore, Result};
+use std::env;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -21,11 +22,26 @@ enum KvsOpts {
 }
 
 fn main() -> Result<()> {
+    let mut kvs = KvStore::open(env::current_dir()?)?;
     match KvsOpts::from_args() {
-        KvsOpts::Get { key: _ } => eprintln!("unimplemented"),
-        KvsOpts::Set { key: _, value: _ } => eprintln!("unimplemented"),
-        KvsOpts::Rm { key: _ } => eprintln!("unimplemented"),
+        KvsOpts::Get { key } => {
+            if let Some(found) = kvs.get(key)? {
+                println!("{}", found);
+            } else {
+                println!("Key not found");
+            }
+            std::process::exit(0);
+        }
+        KvsOpts::Set { key, value } => {
+            kvs.set(key, value)?;
+            std::process::exit(0);
+        }
+        KvsOpts::Rm { key } => {
+            if let Err(e) = kvs.remove(key) {
+                println!("{}", e);
+                std::process::exit(1);
+            }
+            std::process::exit(0);
+        }
     }
-
-    std::process::exit(1);
 }

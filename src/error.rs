@@ -11,6 +11,8 @@ pub enum Error {
     Time(#[from] SystemTimeError),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error("Key not found")]
+    InvalidRm,
 }
 
 /// The Result type encapsulates standard result

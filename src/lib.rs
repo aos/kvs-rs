@@ -4,11 +4,11 @@ mod command;
 mod error;
 
 use command::{Command, Operation};
-pub use error::Result;
+pub use error::{Error, Result};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::prelude::*;
-use std::io::SeekFrom;
+use std::io::BufReader;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -44,7 +44,7 @@ impl KvStore {
     /// assert_eq!(k.get("hi".to_owned()), Some("bye".to_owned()));
     /// assert_eq!(k.get("no".to_owned()), None);
     /// ```
-    pub fn get(&self, key: String) -> Result<Option<String>> {
+    pub fn get(&mut self, key: String) -> Result<Option<String>> {
         Ok(self.map.get(&key).cloned())
     }
 
@@ -62,13 +62,6 @@ impl KvStore {
         // TODO: consider buffering
         serde_json::to_writer(&self.active_file, &Command(Operation::Set(key, value)))?;
         writeln!(self.active_file)?;
-        // This is written (on multiple operations):
-        // {"Set":["key1","value1"]}\n{"Set":["key2","value2"]}
-        //let mut buf = String::new();
-        //self.active_file.seek(SeekFrom::Start(0))?;
-        //self.active_file.read_to_string(&mut buf)?;
-
-        //println!("We read: {}", buf);
         Ok(())
     }
 
@@ -81,7 +74,10 @@ impl KvStore {
     /// k.remove("hi".to_owned());
     /// ```
     pub fn remove(&mut self, key: String) -> Result<()> {
-        self.map.remove(&key);
+        self.map.remove(&key).ok_or(Error::InvalidRm)?;
+        serde_json::to_writer(&self.active_file, &Command(Operation::Rm(key)))?;
+        writeln!(self.active_file)?;
+
         Ok(())
     }
 
@@ -112,10 +108,21 @@ impl KvStore {
                 .append(true)
                 .create(true)
                 .open(found_latest.path())?;
-            let mut kv = KvStore::new(current_dir, file);
-            let map = HashMap::new();
+            let mut map = HashMap::new();
             // Slurp the serialized data from file into hashmap
+            for line in BufReader::new(&file).lines() {
+                match serde_json::from_str(&line?)? {
+                    Command(Operation::Set(k, v)) => {
+                        map.insert(k, v);
+                    }
+                    Command(Operation::Rm(k)) => {
+                        map.remove(&k);
+                    }
+                    Command(Operation::Get(_)) => {}
+                }
+            }
 
+            let mut kv = KvStore::new(current_dir, file);
             kv.map = map;
             Ok(kv)
         } else {
