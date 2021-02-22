@@ -14,11 +14,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const BUCKET_EXT: &str = "kvstore"; // {timestamp}.kvstore
 
+struct StoreEntry {
+    file_id: PathBuf,
+    offset: u64,
+    tstamp: u64,
+}
+
 /// KvStore holds an in-memory HashMap of <String, String>
 pub struct KvStore {
-    map: HashMap<String, usize>,
+    map: HashMap<String, StoreEntry>,
     dir: PathBuf,
     active_file: File,
+    active_file_id: PathBuf,
 }
 
 impl KvStore {
@@ -27,11 +34,12 @@ impl KvStore {
     /// use kvs::KvStore;
     /// let k = KvStore::new();
     /// ```
-    pub fn new(dir: PathBuf, file: File) -> Self {
+    pub fn new(dir: PathBuf, file: File, file_id: PathBuf) -> Self {
         KvStore {
             map: HashMap::new(),
             dir,
             active_file: file,
+            active_file_id: file_id,
         }
     }
 
@@ -46,12 +54,12 @@ impl KvStore {
     /// ```
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
         // TODO: Get rid of these "if-let" chains somehow
-        if let Some(offset) = self.map.get(&key) {
-            self.active_file.seek(SeekFrom::Start(*offset as u64))?;
+        if let Some(entry) = self.map.get(&key) { // Option
+            self.active_file.seek(SeekFrom::Start(entry.offset))?; // Result
             let mut it = serde_json::Deserializer::from_reader(&self.active_file).into_iter::<Command>();
             if let Some(item) = it.next() {
                 match item? {
-                    Command::Set(_, v) => {
+                    Command::Set(_, v, _) => {
                         Ok(Some(v.to_owned()))
                     }
                     _ => {
@@ -75,10 +83,16 @@ impl KvStore {
     /// ```
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let offset = self.active_file.seek(SeekFrom::Current(0))?;
-        self.map.insert(key.clone(), offset as usize);
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH)?;
+        self.map.insert(key.clone(), StoreEntry{
+            file_id: self.active_file_id.clone(),
+            offset,
+            tstamp: ts.as_secs()
+        });
         // writes should be write-through:
         // update the in-memory map + the file on disk at the same time (not atomic)
-        serde_json::to_writer(&self.active_file, &Command::Set(key, value))?;
+        let metadata = self.active_file.metadata()?;
+        serde_json::to_writer(&self.active_file, &Command::Set(key, value, ts.as_secs()))?;
         writeln!(self.active_file)?;
         Ok(())
     }
@@ -120,6 +134,7 @@ impl KvStore {
             });
 
         let mut file = OpenOptions::new();
+        let ts = SystemTime::now().duration_since(UNIX_EPOCH)?;
         if let Some(found_latest) = maybe_latest {
             let file: File = file
                 .read(true)
@@ -131,11 +146,15 @@ impl KvStore {
             let mut it = de.into_iter::<Command>();
             loop {
                 // Slurp the serialized data from file into hashmap
-                let offset = it.byte_offset();
+                let offset = it.byte_offset() as u64;
                 if let Some(item) = it.next() {
                     match item? {
-                        Command::Set(k, _) => {
-                            map.insert(k, offset);
+                        Command::Set(k, _, _) => {
+                            map.insert(k, StoreEntry {
+                                file_id: found_latest.path(),
+                                offset,
+                                tstamp: ts.as_secs()
+                            });
                         }
                         Command::Rm(k) => {
                             map.remove(&k);
@@ -147,18 +166,18 @@ impl KvStore {
                 }
             }
 
-            let mut kv = KvStore::new(current_dir, file);
+            let mut kv = KvStore::new(current_dir, file, found_latest.path());
             kv.map = map;
             Ok(kv)
         } else {
-            let ts = SystemTime::now().duration_since(UNIX_EPOCH)?;
-            let file = file.read(true).append(true).create(true).open(format!(
+            let file_path = PathBuf::from(format!(
                 "{}/{}.{}",
                 current_dir.as_path().display(),
                 ts.as_secs(),
                 BUCKET_EXT
-            ))?;
-            Ok(KvStore::new(current_dir, file))
+            ));
+            let file = file.read(true).append(true).create(true).open(&file_path)?;
+            Ok(KvStore::new(current_dir, file, file_path))
         }
     }
 }
