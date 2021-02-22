@@ -61,8 +61,7 @@ impl KvStore {
         if let Some(entry) = self.keydir.get(&key) {
             let mut file = File::open(&entry.file_id)?;
             file.seek(SeekFrom::Start(entry.offset))?;
-            let mut it =
-                serde_json::Deserializer::from_reader(&file).into_iter::<Command>();
+            let mut it = serde_json::Deserializer::from_reader(&file).into_iter::<Command>();
             if let Some(item) = it.next() {
                 match item? {
                     Command::Set(_, v, _) => Ok(Some(v.to_owned())),
@@ -85,17 +84,21 @@ impl KvStore {
     /// ```
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
         let metadata = self.active_file.fd.metadata()?;
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH)?;
+        let ts = Self::timestamp_sec()?;
 
         // Use new active file if we exceed bucket size
         if metadata.len() > MAX_BUCKET_SIZE {
             self.active_file.path = PathBuf::from(format!(
                 "{}/{}.{}",
                 self.dir.as_path().display(),
-                ts.as_secs(),
+                ts,
                 BUCKET_EXT
             ));
-            self.active_file.fd = OpenOptions::new().read(true).append(true).create(true).open(&self.active_file.path)?;
+            self.active_file.fd = OpenOptions::new()
+                .read(true)
+                .append(true)
+                .create(true)
+                .open(&self.active_file.path)?;
         }
 
         let offset = self.active_file.fd.seek(SeekFrom::Current(0))?;
@@ -104,12 +107,12 @@ impl KvStore {
             KeyDirEntry {
                 file_id: self.active_file.path.clone(),
                 offset,
-                tstamp: ts.as_secs(),
+                tstamp: ts,
             },
         );
         // writes should be write-through:
         // update the in-memory map + the file on disk at the same time (not atomic)
-        serde_json::to_writer(&self.active_file.fd, &Command::Set(key, value, ts.as_secs()))?;
+        serde_json::to_writer(&self.active_file.fd, &Command::Set(key, value, ts))?;
         writeln!(self.active_file.fd)?;
         Ok(())
     }
@@ -151,7 +154,7 @@ impl KvStore {
             });
 
         let mut fd = OpenOptions::new();
-        let ts = SystemTime::now().duration_since(UNIX_EPOCH)?;
+        let ts = Self::timestamp_sec()?;
         if let Some(found_latest) = maybe_latest {
             let fd: File = fd
                 .read(true)
@@ -172,7 +175,7 @@ impl KvStore {
                                 KeyDirEntry {
                                     file_id: found_latest.path(),
                                     offset,
-                                    tstamp: ts.as_secs(),
+                                    tstamp: ts,
                                 },
                             );
                         }
@@ -186,24 +189,37 @@ impl KvStore {
                 }
             }
 
-            let mut kv = KvStore::new(current_dir, ActiveFile {
-                fd,
-                path: found_latest.path()
-            });
+            let mut kv = KvStore::new(
+                current_dir,
+                ActiveFile {
+                    fd,
+                    path: found_latest.path(),
+                },
+            );
             kv.keydir = keydir;
             Ok(kv)
         } else {
             let file_path = PathBuf::from(format!(
                 "{}/{}.{}",
                 current_dir.as_path().display(),
-                ts.as_secs(),
+                ts,
                 BUCKET_EXT
             ));
             let fd = fd.read(true).append(true).create(true).open(&file_path)?;
-            Ok(KvStore::new(current_dir, ActiveFile {
-                fd,
-                path: file_path,
-            }))
+            Ok(KvStore::new(
+                current_dir,
+                ActiveFile {
+                    fd,
+                    path: file_path,
+                },
+            ))
         }
+    }
+
+    fn timestamp_sec() -> Result<u64> {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|t| t.as_secs())
+            .map_err(std::convert::From::from)
     }
 }
