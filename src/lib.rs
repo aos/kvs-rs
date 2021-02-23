@@ -135,37 +135,29 @@ impl KvStore {
 
     /// Opens the KvStore at a given path. Return the KvStore
     pub fn open(dir: impl Into<PathBuf>) -> Result<KvStore> {
-        // 1. check to see if an existing file is available in dir
-        // 2. if available, open it and slurp into memory (for now we will not buffer)
-        //      - otherwise, create a new one
         let current_dir: PathBuf = dir.into();
-        let maybe_latest = fs::read_dir(&current_dir)?
+        let mut files: Vec<_> = fs::read_dir(&current_dir)?
             .filter_map(|e| e.ok())
             .filter(|e| {
                 e.file_type().map_or(false, |ft| ft.is_file())
                     && e.path().extension().map_or(false, |e| e == BUCKET_EXT)
             })
-            .max_by_key(|e| {
-                e.file_name().to_str().map_or(0, |e| {
-                    e.split(".")
-                        .next()
-                        .map_or(0, |v| v.parse::<usize>().unwrap_or(0))
-                })
-            });
-
-        let mut fd = OpenOptions::new();
+            .collect();
+        files.sort_by_cached_key(|e| {
+            e.file_name().to_str().map_or(0, |e| {
+                e.split(".")
+                    .next()
+                    .map_or(0, |v| v.parse::<usize>().unwrap_or(0))
+            })
+        });
+        let mut keydir = HashMap::new();
         let ts = Self::timestamp_sec()?;
-        if let Some(found_latest) = maybe_latest {
-            let fd: File = fd
-                .read(true)
-                .append(true)
-                .create(true)
-                .open(found_latest.path())?;
-            let mut keydir = HashMap::new();
+        // Slurp the serialized data from each file into hashmap
+        for entry in &files {
+            let fd = File::open(entry.path())?;
             let de = serde_json::Deserializer::from_reader(&fd);
             let mut it = de.into_iter::<Command>();
             loop {
-                // Slurp the serialized data from file into hashmap
                 let offset = it.byte_offset() as u64;
                 if let Some(item) = it.next() {
                     match item? {
@@ -173,7 +165,7 @@ impl KvStore {
                             keydir.insert(
                                 k,
                                 KeyDirEntry {
-                                    file_id: found_latest.path(),
+                                    file_id: entry.path(),
                                     offset,
                                     tstamp: ts,
                                 },
@@ -188,12 +180,23 @@ impl KvStore {
                     break;
                 }
             }
+        }
 
+        let mut fd = OpenOptions::new();
+        if let Some(latest) = files.last() {
+            let mut fd: File = fd
+                .read(true)
+                .append(true)
+                .create(true)
+                .open(latest.path())?;
+            // We opened this file previously to add entries, seek to end so
+            // that we can start to append new items correctly
+            fd.seek(SeekFrom::End(0))?;
             let mut kv = KvStore::new(
                 current_dir,
                 ActiveFile {
                     fd,
-                    path: found_latest.path(),
+                    path: latest.path(),
                 },
             );
             kv.keydir = keydir;
