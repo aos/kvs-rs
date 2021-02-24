@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub enum Command {
-    Set(String, String, u64), // (key, value, timestamp)
-    Get(String),
+    Set(String, String), // (key, value, timestamp)
     Rm(String),
 }

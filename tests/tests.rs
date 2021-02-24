@@ -290,15 +290,9 @@ fn compaction() -> Result<()> {
         drop(store);
         // reopen and check content.
         let store = KvStore::open(temp_dir.path())?;
-        dbg!(temp_dir);
-
-        //println!("sleeping...");
-        //use std::{thread, time};
-        //thread::sleep(time::Duration::from_secs(150));
-
         for key_id in 0..1000 {
             let key = format!("key{}", key_id);
-            dbg!(assert_eq!(store.get(key)?, Some(format!("{}", iter))));
+            assert_eq!(store.get(key)?, Some(format!("{}", iter)));
         }
         return Ok(());
     }
