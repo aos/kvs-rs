@@ -6,15 +6,16 @@ mod error;
 use command::Command;
 pub use error::{Error, Result};
 use std::collections::HashMap;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, DirEntry, File, OpenOptions};
 use std::io::prelude::*;
 use std::io::SeekFrom;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const BUCKET_EXT: &str = "kvstore"; // {timestamp}.kvstore
-const MAX_BUCKET_SIZE: u64 = 5 * 1024 * 1024; // 5 MB
+const BUCKET_EXT: &str = "kvstore"; // {increment}.kvstore
+const MAX_BUCKET_SIZE: u64 = 1 * 512; // 1 KB
 
+#[derive(Clone)]
 struct KeyDirEntry {
     file_id: PathBuf,
     offset: u64,
@@ -24,6 +25,27 @@ struct KeyDirEntry {
 pub struct ActiveFile {
     fd: File,
     path: PathBuf,
+    num: u32,
+}
+
+impl ActiveFile {
+    fn new(dir: impl Into<PathBuf>, num: u32) -> Result<Self> {
+        let dir = dir.into();
+        let num = num + 1;
+        let path = PathBuf::from(format!(
+            "{}/{}.{}",
+            dir.as_path().display(),
+            num,
+            BUCKET_EXT
+        ));
+        let fd = OpenOptions::new()
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(&path)?;
+
+        Ok(ActiveFile { fd, path, num })
+    }
 }
 
 /// KvStore holds an in-memory HashMap of <String, String>
@@ -56,7 +78,7 @@ impl KvStore {
     /// assert_eq!(k.get("hi".to_owned()), Some("bye".to_owned()));
     /// assert_eq!(k.get("no".to_owned()), None);
     /// ```
-    pub fn get(&mut self, key: String) -> Result<Option<String>> {
+    pub fn get(&self, key: String) -> Result<Option<String>> {
         // TODO: Get rid of these "if-let" chains somehow
         if let Some(entry) = self.keydir.get(&key) {
             let mut file = File::open(&entry.file_id)?;
@@ -83,22 +105,10 @@ impl KvStore {
     /// k.set("hi".to_owned(), "bye".to_owned());
     /// ```
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        let metadata = self.active_file.fd.metadata()?;
         let ts = Self::timestamp_sec()?;
-
         // Use new active file if we exceed bucket size
-        if metadata.len() > MAX_BUCKET_SIZE {
-            self.active_file.path = PathBuf::from(format!(
-                "{}/{}.{}",
-                self.dir.as_path().display(),
-                ts,
-                BUCKET_EXT
-            ));
-            self.active_file.fd = OpenOptions::new()
-                .read(true)
-                .append(true)
-                .create(true)
-                .open(&self.active_file.path)?;
+        if self.active_file.fd.metadata()?.len() > MAX_BUCKET_SIZE {
+            self.active_file = ActiveFile::new(self.dir.clone(), self.active_file.num)?;
         }
 
         let offset = self.active_file.fd.seek(SeekFrom::Current(0))?;
@@ -114,6 +124,11 @@ impl KvStore {
         // update the in-memory map + the file on disk at the same time (not atomic)
         serde_json::to_writer(&self.active_file.fd, &Command::Set(key, value, ts))?;
         writeln!(self.active_file.fd)?;
+
+        let files = fs::read_dir(self.dir.clone())?;
+        if files.count() > 10 {
+            self.compact()?;
+        }
         Ok(())
     }
 
@@ -136,20 +151,7 @@ impl KvStore {
     /// Opens the KvStore at a given path. Return the KvStore
     pub fn open(dir: impl Into<PathBuf>) -> Result<KvStore> {
         let current_dir: PathBuf = dir.into();
-        let mut files: Vec<_> = fs::read_dir(&current_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_type().map_or(false, |ft| ft.is_file())
-                    && e.path().extension().map_or(false, |e| e == BUCKET_EXT)
-            })
-            .collect();
-        files.sort_by_cached_key(|e| {
-            e.file_name().to_str().map_or(0, |e| {
-                e.split(".")
-                    .next()
-                    .map_or(0, |v| v.parse::<usize>().unwrap_or(0))
-            })
-        });
+        let files = Self::get_sorted_files(current_dir.clone())?;
         let mut keydir = HashMap::new();
         let ts = Self::timestamp_sec()?;
         // Slurp the serialized data from each file into hashmap
@@ -182,41 +184,78 @@ impl KvStore {
             }
         }
 
-        let mut fd = OpenOptions::new();
         if let Some(latest) = files.last() {
-            let mut fd: File = fd
-                .read(true)
-                .append(true)
-                .create(true)
-                .open(latest.path())?;
-            // We opened this file previously to add entries, seek to end so
-            // that we can start to append new items correctly
-            fd.seek(SeekFrom::End(0))?;
-            let mut kv = KvStore::new(
-                current_dir,
-                ActiveFile {
-                    fd,
-                    path: latest.path(),
-                },
-            );
+            let num = latest.file_name().to_str().map_or(0, |e| {
+                e.split(".")
+                    .next()
+                    .map_or(0, |v| v.parse::<u32>().unwrap_or(0))
+            });
+            let active_file = ActiveFile::new(current_dir.clone(), num)?;
+            let mut kv = KvStore::new(current_dir, active_file);
             kv.keydir = keydir;
             Ok(kv)
         } else {
-            let file_path = PathBuf::from(format!(
-                "{}/{}.{}",
-                current_dir.as_path().display(),
-                ts,
-                BUCKET_EXT
-            ));
-            let fd = fd.read(true).append(true).create(true).open(&file_path)?;
-            Ok(KvStore::new(
-                current_dir,
-                ActiveFile {
-                    fd,
-                    path: file_path,
-                },
-            ))
+            let active_file = ActiveFile::new(current_dir.clone(), 0)?;
+            Ok(KvStore::new(current_dir, active_file))
         }
+    }
+
+    fn compact(&mut self) -> Result<()> {
+        // Naive solution:
+        // 1. Mark all current files for deletion
+        // 2. Iterate through keydir and write all values to new file(s) with new offsets
+        // 3. If step 2 succeeds, delete all marked files
+        // 4. Create new active file
+        let files_to_delete = Self::get_sorted_files(self.dir.clone())?;
+        let mut new_keydir = HashMap::new();
+        let mut new_active_file = ActiveFile::new(self.dir.clone(), self.active_file.num)?;
+        for (key, _) in self.keydir.iter() {
+            if let Some(value) = self.get(key.to_owned())? {
+                let ts = Self::timestamp_sec()?;
+                let offset = new_active_file.fd.seek(SeekFrom::Current(0))?;
+                new_keydir.insert(
+                    key.clone(),
+                    KeyDirEntry {
+                        file_id: new_active_file.path.clone(),
+                        offset,
+                        tstamp: ts,
+                    },
+                );
+                serde_json::to_writer(&new_active_file.fd, &Command::Set(key.clone(), value, ts))?;
+                writeln!(new_active_file.fd)?;
+            }
+
+            if new_active_file.fd.metadata()?.len() > MAX_BUCKET_SIZE {
+                new_active_file = ActiveFile::new(self.dir.clone(), new_active_file.num)?;
+            }
+        }
+
+        self.keydir = new_keydir;
+        self.active_file = new_active_file;
+
+        for f in files_to_delete {
+            fs::remove_file(f.path())?;
+        }
+
+        Ok(())
+    }
+
+    fn get_sorted_files(current_dir: PathBuf) -> Result<Vec<DirEntry>> {
+        let mut files: Vec<_> = fs::read_dir(&current_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_type().map_or(false, |ft| ft.is_file())
+                    && e.path().extension().map_or(false, |e| e == BUCKET_EXT)
+            })
+            .collect();
+        files.sort_by_cached_key(|e| {
+            e.file_name().to_str().map_or(0, |e| {
+                e.split(".")
+                    .next()
+                    .map_or(0, |v| v.parse::<usize>().unwrap_or(0))
+            })
+        });
+        Ok(files)
     }
 
     fn timestamp_sec() -> Result<u64> {

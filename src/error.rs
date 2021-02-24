@@ -13,6 +13,8 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error("Key not found")]
     KeyNotFound,
+    #[error("Unspecified")]
+    Unspecified,
 }
 
 /// The Result type encapsulates standard result

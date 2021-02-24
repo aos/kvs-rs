@@ -1,5 +1,6 @@
 use kvs::{KvStore, Result};
 use std::env;
+use std::process::exit;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -30,18 +31,18 @@ fn main() -> Result<()> {
             } else {
                 println!("Key not found");
             }
-            std::process::exit(0);
+            exit(0);
         }
         KvsOpts::Set { key, value } => {
             kvs.set(key, value)?;
-            std::process::exit(0);
+            exit(0);
         }
         KvsOpts::Rm { key } => {
             if let Err(e) = kvs.remove(key) {
                 println!("{}", e);
-                std::process::exit(1);
+                exit(1);
             }
-            std::process::exit(0);
+            exit(0);
         }
     }
 }
