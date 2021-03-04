@@ -1,8 +1,8 @@
 use serde_json;
 use std::io;
+use std::net::AddrParseError;
 use std::time::SystemTimeError;
 use thiserror::Error;
-use std::net::AddrParseError;
 
 #[derive(Error, Debug)]
 pub enum Error {
