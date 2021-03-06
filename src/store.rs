@@ -1,5 +1,6 @@
 use crate::command::Command;
-pub use crate::error::{Error, Result};
+use crate::{KvsEngine, Result};
+use crate::error::Error;
 use std::collections::HashMap;
 use std::fs::{self, DirEntry, File, OpenOptions};
 use std::io::prelude::*;
@@ -92,56 +93,6 @@ impl KvStore {
         }
     }
 
-    /// Gets an item from the KvStore
-    pub fn get(&self, key: String) -> Result<Option<String>> {
-        if let Some(entry) = self.keydir.get(&key) {
-            let mut file = File::open(&entry.file_id)?;
-            file.seek(SeekFrom::Start(entry.offset))?;
-            let mut it = serde_json::Deserializer::from_reader(&file).into_iter::<Command>();
-            if let Some(item) = it.next() {
-                match item? {
-                    Command::Set(_, v) => Ok(Some(v.to_owned())),
-                    _ => Ok(None),
-                }
-            } else {
-                Ok(None)
-            }
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Inserts an item or updates an existing item in the store
-    pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        // writes should be write-through:
-        // update the in-memory map + the file on disk at the same time (not atomic)
-        let offset = self.active_file.fd.seek(SeekFrom::Current(0))?;
-        self.keydir.insert(
-            key.clone(),
-            KeyDirEntry {
-                file_id: self.active_file.path.clone(),
-                offset,
-            },
-        );
-        serde_json::to_writer(&self.active_file.fd, &Command::Set(key, value))?;
-        writeln!(self.active_file.fd)?;
-        self.uncompacted += offset;
-
-        if self.uncompacted > COMPACTION_THRESHOLD {
-            self.compact()?;
-        }
-        Ok(())
-    }
-
-    /// Removes an item from the store
-    pub fn remove(&mut self, key: String) -> Result<()> {
-        self.keydir.remove(&key).ok_or(Error::KeyNotFound)?;
-        serde_json::to_writer(&self.active_file.fd, &Command::Rm(key))?;
-        writeln!(self.active_file.fd)?;
-
-        Ok(())
-    }
-
     fn compact(&mut self) -> Result<()> {
         // Naive solution:
         // 1. Mark all current files for deletion
@@ -196,6 +147,59 @@ impl KvStore {
         });
         Ok(files)
     }
+}
+
+impl KvsEngine for KvStore {
+    /// Gets an item from the KvStore
+    fn get(&mut self, key: String) -> Result<Option<String>> {
+        if let Some(entry) = self.keydir.get(&key) {
+            let mut file = File::open(&entry.file_id)?;
+            file.seek(SeekFrom::Start(entry.offset))?;
+            let mut it = serde_json::Deserializer::from_reader(&file).into_iter::<Command>();
+            if let Some(item) = it.next() {
+                match item? {
+                    Command::Set(_, v) => Ok(Some(v.to_owned())),
+                    _ => Ok(None),
+                }
+            } else {
+                Ok(None)
+            }
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Inserts an item or updates an existing item in the store
+    fn set(&mut self, key: String, value: String) -> Result<()> {
+        // writes should be write-through:
+        // update the in-memory map + the file on disk at the same time (not atomic)
+        let offset = self.active_file.fd.seek(SeekFrom::Current(0))?;
+        self.keydir.insert(
+            key.clone(),
+            KeyDirEntry {
+                file_id: self.active_file.path.clone(),
+                offset,
+            },
+        );
+        serde_json::to_writer(&self.active_file.fd, &Command::Set(key, value))?;
+        writeln!(self.active_file.fd)?;
+        self.uncompacted += offset;
+
+        if self.uncompacted > COMPACTION_THRESHOLD {
+            self.compact()?;
+        }
+        Ok(())
+    }
+
+    /// Removes an item from the store
+    fn remove(&mut self, key: String) -> Result<()> {
+        self.keydir.remove(&key).ok_or(Error::KeyNotFound)?;
+        serde_json::to_writer(&self.active_file.fd, &Command::Rm(key))?;
+        writeln!(self.active_file.fd)?;
+
+        Ok(())
+    }
+
 }
 
 struct KeyDirEntry {

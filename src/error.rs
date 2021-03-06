@@ -16,6 +16,8 @@ pub enum Error {
     KeyNotFound,
     #[error(transparent)]
     AddrParse(#[from] AddrParseError),
+    #[error("Invalid engine")]
+    InvalidEngine,
     #[error("Unspecified")]
     Unspecified,
 }

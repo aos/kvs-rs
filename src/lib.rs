@@ -4,6 +4,7 @@ mod command;
 mod engine;
 mod error;
 mod store;
+mod server;
 
 pub use engine::KvsEngine;
 pub use error::Result;

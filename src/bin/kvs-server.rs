@@ -1,5 +1,5 @@
 use kvs::{KvStore, Result};
-use slog::{self, crit, debug, info, o, warn, Drain};
+use slog::*;
 use slog_async;
 use slog_term;
 use std::env;

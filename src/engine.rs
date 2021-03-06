@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::Result;
 
 pub trait KvsEngine {
     fn set(&mut self, key: String, value: String) -> Result<()>;

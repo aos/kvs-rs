@@ -25,11 +25,3 @@ thiserror = "1.0.23"
 
 [lib]
 test = false
-
-[[bin]]
-name = "kvs-client"
-path = "src/bin/client.rs"
-
-[[bin]]
-name = "kvs-server"
-path = "src/bin/server.rs"
