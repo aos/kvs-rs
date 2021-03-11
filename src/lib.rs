@@ -3,9 +3,9 @@
 mod command;
 mod engine;
 mod error;
-mod store;
 mod server;
+mod store;
 
 pub use engine::KvsEngine;
 pub use error::Result;
-pub use store::KvStore;
+pub use store::{KvStore, BUCKET_EXT};

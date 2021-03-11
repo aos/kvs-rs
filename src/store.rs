@@ -1,13 +1,13 @@
 use crate::command::Command;
-use crate::{KvsEngine, Result};
 use crate::error::Error;
+use crate::{KvsEngine, Result};
 use std::collections::HashMap;
 use std::fs::{self, DirEntry, File, OpenOptions};
 use std::io::prelude::*;
 use std::io::SeekFrom;
 use std::path::PathBuf;
 
-const BUCKET_EXT: &str = "kvstore"; // {current_generation}.kvstore
+pub const BUCKET_EXT: &str = "kvstore"; // {current_generation}.kvstore
 const COMPACTION_THRESHOLD: u64 = 1 * 1024 * 1024; // 1 MB
 
 /// KvStore holds an in-memory HashMap of <String, String>
@@ -103,7 +103,7 @@ impl KvStore {
         let new_gen = self.current_gen + 2;
         let mut new_keydir = HashMap::new();
         let mut new_active_file = ActiveFile::new(self.dir.clone(), new_gen)?;
-        for (key, _) in self.keydir.iter() {
+        for (key, _) in self.keydir.clone().iter() {
             if let Some(value) = self.get(key.to_owned())? {
                 let offset = new_active_file.fd.seek(SeekFrom::Current(0))?;
                 new_keydir.insert(
@@ -199,9 +199,9 @@ impl KvsEngine for KvStore {
 
         Ok(())
     }
-
 }
 
+#[derive(Clone)]
 struct KeyDirEntry {
     file_id: PathBuf,
     offset: u64,

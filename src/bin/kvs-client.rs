@@ -30,6 +30,7 @@ enum ClientOpts {
 }
 
 fn main() -> Result<()> {
+    // connect to a running server first
     let mut kvs = KvStore::open(env::current_dir()?)?;
     match ClientOpts::from_args() {
         ClientOpts::Get { key, addr } => {

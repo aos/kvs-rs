@@ -1,4 +1,3 @@
-use serde_json;
 use std::io;
 use std::net::AddrParseError;
 use std::time::SystemTimeError;
@@ -16,6 +15,8 @@ pub enum Error {
     KeyNotFound,
     #[error(transparent)]
     AddrParse(#[from] AddrParseError),
+    #[error(transparent)]
+    Sled(#[from] sled::Error),
     #[error("Invalid engine")]
     InvalidEngine,
     #[error("Unspecified")]

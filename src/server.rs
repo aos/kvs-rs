@@ -1,36 +1,64 @@
-use crate::{KvsEngine, KvStore, Result};
 use crate::error::Error;
+use crate::{KvStore, KvsEngine, Result, BUCKET_EXT};
+use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
-use std::net::SocketAddr;
 
 struct KvsServer {
-    addr: SocketAddr,
+    connection: TcpListener,
     engine: Box<dyn KvsEngine>,
 }
 
 impl KvsServer {
-    pub fn new(addr: SocketAddr,
+    pub fn new(
+        addr: SocketAddr,
         path: impl Into<PathBuf>,
-        engine: Option<String>
+        engine: Option<String>,
     ) -> Result<KvsServer> {
-        let dir_is_empty = path.into().read_dir()?.next().is_none();
+        let path = path.into();
+        let dir_is_empty = path.clone().read_dir()?.next().is_none();
         if let Some(engine) = engine {
             match (engine.as_str(), dir_is_empty) {
-                ("kvs", true) => {
-                    Ok(KvsServer {
-                        addr,
-                        engine: Box::new(KvStore::open(path)?)
-                    })
-                },
-                ("sled", true) => {
-
-                },
+                ("kvs", true) => Ok(KvsServer {
+                    connection: TcpListener::bind(addr)?,
+                    engine: Box::new(KvStore::open(path)?),
+                }),
+                ("sled", true) => Ok(KvsServer {
+                    connection: TcpListener::bind(addr)?,
+                    engine: Box::new(sled::open(path)?),
+                }),
                 (e, false) => {
-                    Err(Error::InvalidEngine)
+                    let kvs_exists = std::fs::read_dir(&path)?
+                        .filter_map(|f| f.ok())
+                        .any(|f| f.path().ends_with(BUCKET_EXT));
+
+                    match (e, kvs_exists) {
+                        ("kvs", true) => Ok(KvsServer {
+                            connection: TcpListener::bind(addr)?,
+                            engine: Box::new(KvStore::open(path)?),
+                        }),
+                        ("sled", true) => Err(Error::InvalidEngine),
+                        ("kvs", false) => Err(Error::InvalidEngine),
+                        ("sled", false) => Ok(KvsServer {
+                            connection: TcpListener::bind(addr)?,
+                            engine: Box::new(sled::open(path)?),
+                        }),
+                        (_, _) => unreachable!()
+                    }
                 }
+                (_, true) => unreachable!(),
             }
         } else {
-            "kvs"
+            Ok(KvsServer {
+                connection: TcpListener::bind(addr)?,
+                engine: Box::new(KvStore::open(path)?),
+            })
         }
+    }
+
+    pub fn start(&mut self) -> Result<()> {
+        for stream in self.connection.incoming() {
+            stream?;
+        }
+        Ok(())
     }
 }
