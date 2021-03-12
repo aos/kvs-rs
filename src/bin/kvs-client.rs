@@ -1,6 +1,5 @@
-use kvs::{KvStore, Result};
-use std::env;
-use std::net::SocketAddr;
+use kvs::Result;
+use std::net::{SocketAddr, TcpStream};
 use std::process::exit;
 use structopt::StructOpt;
 
@@ -30,10 +29,10 @@ enum ClientOpts {
 }
 
 fn main() -> Result<()> {
-    // connect to a running server first
-    let mut kvs = KvStore::open(env::current_dir()?)?;
     match ClientOpts::from_args() {
         ClientOpts::Get { key, addr } => {
+            let mut stream = TcpStream::connect(addr)?;
+            // Write request over the wire
             if let Some(found) = kvs.get(key)? {
                 println!("{}", found);
             } else {
@@ -42,10 +41,12 @@ fn main() -> Result<()> {
             exit(0);
         }
         ClientOpts::Set { key, value, addr } => {
+            let mut stream = TcpStream::connect(addr)?;
             kvs.set(key, value)?;
             exit(0);
         }
         ClientOpts::Rm { key, addr } => {
+            let mut stream = TcpStream::connect(addr)?;
             if let Err(e) = kvs.remove(key) {
                 println!("{}", e);
                 exit(1);

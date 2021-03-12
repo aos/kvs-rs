@@ -1,9 +1,9 @@
-use slog::*;
+use kvs::server::KvsServer;
+use slog::{o, Drain};
 use slog_async;
 use slog_term;
 use std::env;
 use std::net::SocketAddr;
-use std::process::exit;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -15,8 +15,7 @@ struct ServerOpts {
     engine: Option<String>,
 }
 
-fn main() -> Result<()> {
-    //let mut kvs = KvStore::open(env::current_dir()?)?;
+fn main() -> kvs::Result<()> {
     let decorator = slog_term::PlainDecorator::new(std::io::stderr());
     let drain = slog_term::CompactFormat::new(decorator).build().fuse();
     let drain = slog_async::Async::new(drain).build().fuse();
@@ -24,11 +23,10 @@ fn main() -> Result<()> {
     let log = slog::Logger::root(drain, o!("version" => env!("CARGO_PKG_VERSION")));
     let opts = ServerOpts::from_args();
 
-    let logger = log.new(o!("addr" => opts.addr.to_string(), "engine" => "kvs"));
+    let logger = log.new(o!("addr" => opts.addr.to_string(), "engine" => opts.engine.to_owned()));
+    let server = KvsServer::new(env::current_dir()?, opts.addr, opts.engine, &logger)?;
 
-    info!(logger, "starting");
-    info!(logger, "listening");
-    debug!(logger, "connected");
+    server.start()?;
 
     Ok(())
 }

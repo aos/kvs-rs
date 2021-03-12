@@ -3,7 +3,7 @@
 mod command;
 mod engine;
 mod error;
-mod server;
+pub mod server;
 mod store;
 
 pub use engine::KvsEngine;
