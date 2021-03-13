@@ -17,6 +17,8 @@ pub enum Error {
     AddrParse(#[from] AddrParseError),
     #[error(transparent)]
     Sled(#[from] sled::Error),
+    #[error(transparent)]
+    Bincode(#[from] Box<bincode::ErrorKind>),
     #[error("Invalid engine")]
     InvalidEngine,
     #[error("Unspecified")]

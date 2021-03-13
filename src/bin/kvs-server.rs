@@ -24,7 +24,7 @@ fn main() -> kvs::Result<()> {
     let opts = ServerOpts::from_args();
 
     let logger = log.new(o!("addr" => opts.addr.to_string(), "engine" => opts.engine.to_owned()));
-    let server = KvsServer::new(env::current_dir()?, opts.addr, opts.engine, &logger)?;
+    let mut server = KvsServer::new(env::current_dir()?, opts.addr, opts.engine, &logger)?;
 
     server.start()?;
 

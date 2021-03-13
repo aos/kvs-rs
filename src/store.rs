@@ -53,7 +53,7 @@ impl KvStore {
 
         if let Some(latest) = files.last() {
             let gen = latest.file_name().to_str().map_or(0, |e| {
-                e.split(".")
+                e.split('.')
                     .next()
                     .map_or(0, |v| v.parse::<u64>().unwrap_or(0))
             });
@@ -158,7 +158,7 @@ impl KvsEngine for KvStore {
             let mut it = serde_json::Deserializer::from_reader(&file).into_iter::<Command>();
             if let Some(item) = it.next() {
                 match item? {
-                    Command::Set(_, v) => Ok(Some(v.to_owned())),
+                    Command::Set(_, v) => Ok(Some(v)),
                     _ => Ok(None),
                 }
             } else {
