@@ -30,12 +30,17 @@ impl KvsEngine for Db {
     fn set(&mut self, key: String, value: String) -> Result<()> {
         <Tree>::insert(self, key, value.as_str())
             .map(|_| ())
-            .map_err(error::Error::Sled)
+            .map_err(error::Error::Sled)?;
+
+        <Tree>::flush(self).map(|_| ()).map_err(error::Error::Sled)
     }
 
     fn remove(&mut self, key: String) -> Result<()> {
-        <Tree>::remove(self, key)
+        let x = <Tree>::remove(self, key).map_err(error::Error::Sled)?;
+        <Tree>::flush(self)
             .map(|_| ())
-            .map_err(error::Error::Sled)
+            .map_err(error::Error::Sled)?;
+
+        x.map(|_| ()).ok_or(error::Error::KeyNotFound)
     }
 }

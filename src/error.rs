@@ -19,6 +19,8 @@ pub enum Error {
     Sled(#[from] sled::Error),
     #[error(transparent)]
     Bincode(#[from] Box<bincode::ErrorKind>),
+    #[error("Response: {0}")]
+    Response(String),
     #[error("Invalid engine")]
     InvalidEngine,
     #[error("Unspecified")]

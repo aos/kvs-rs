@@ -160,10 +160,8 @@ impl KvsServer {
                             }
                             Err(e) => {
                                 error!(self.logger, "ERROR removing key: {}", e);
-                                match bincode::serialize_into(
-                                    stream,
-                                    &command::Response::Error("Error RM key".to_string()),
-                                ) {
+                                match bincode::serialize_into(stream, &command::Response::NotFound)
+                                {
                                     Ok(_) => {}
                                     Err(e) => {
                                         error!(self.logger, "ERROR serialzing response: {}", e)
