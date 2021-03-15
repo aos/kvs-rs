@@ -14,6 +14,8 @@ pub enum Error {
     #[error("Key not found")]
     KeyNotFound,
     #[error(transparent)]
+    Utf8(#[from] std::string::FromUtf8Error),
+    #[error(transparent)]
     AddrParse(#[from] AddrParseError),
     #[error(transparent)]
     Sled(#[from] sled::Error),

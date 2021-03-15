@@ -1,6 +1,7 @@
 use crate::command;
 use crate::error::Error;
-use crate::{KvStore, KvsEngine, Result, BUCKET_EXT};
+use crate::engines::{KvStore, KvsEngine, BUCKET_EXT, SledKvsEngine};
+use crate::Result;
 use slog::{error, info, o};
 use std::net::{SocketAddr, TcpListener};
 use std::path::PathBuf;
@@ -29,7 +30,7 @@ impl KvsServer {
                 }),
                 ("sled", true) => Ok(KvsServer {
                     connection: TcpListener::bind(addr)?,
-                    engine: Box::new(sled::open(path)?),
+                    engine: Box::new(SledKvsEngine::new(sled::open(path)?)),
                     logger: logger.new(o!("sled" => "new sled")),
                 }),
                 (e, false) => {
@@ -53,7 +54,7 @@ impl KvsServer {
                         }
                         ("sled", false) => Ok(KvsServer {
                             connection: TcpListener::bind(addr)?,
-                            engine: Box::new(sled::open(path)?),
+                            engine: Box::new(SledKvsEngine::new(sled::open(path)?)),
                             logger: logger.new(o!("sled" => "existing sled")),
                         }),
                         (_, _) => unreachable!(),

@@ -2,12 +2,10 @@
 
 mod client;
 pub mod command;
-mod engine;
+mod engines;
 mod error;
 pub mod server;
-mod store;
 
 pub use client::KvsClient;
-pub use engine::KvsEngine;
+pub use engines::{KvStore, KvsEngine, SledKvsEngine};
 pub use error::Result;
-pub use store::{KvStore, BUCKET_EXT};
