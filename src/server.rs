@@ -1,6 +1,5 @@
 use crate::command;
-use crate::error::Error;
-use crate::engines::{KvStore, KvsEngine, BUCKET_EXT, SledKvsEngine};
+use crate::engines::{KvStore, KvsEngine, SledKvsEngine};
 use crate::Result;
 use slog::{error, info, o};
 use std::net::{SocketAddr, TcpListener};
@@ -16,58 +15,22 @@ impl KvsServer {
     pub fn new(
         path: impl Into<PathBuf>,
         addr: SocketAddr,
-        engine: Option<String>,
+        engine: String,
         logger: &slog::Logger,
     ) -> Result<KvsServer> {
         let path = path.into();
-        let dir_is_empty = path.read_dir()?.next().is_none();
-        if let Some(engine) = engine {
-            match (engine.as_str(), dir_is_empty) {
-                ("kvs", true) => Ok(KvsServer {
-                    connection: TcpListener::bind(addr)?,
-                    engine: Box::new(KvStore::open(path)?),
-                    logger: logger.new(o!("kvs" => "new kvs")),
-                }),
-                ("sled", true) => Ok(KvsServer {
-                    connection: TcpListener::bind(addr)?,
-                    engine: Box::new(SledKvsEngine::new(sled::open(path)?)),
-                    logger: logger.new(o!("sled" => "new sled")),
-                }),
-                (e, false) => {
-                    let kvs_exists = std::fs::read_dir(&path)?
-                        .filter_map(|f| f.ok())
-                        .any(|f| f.path().extension() == Some(BUCKET_EXT.as_ref()));
-
-                    match (e, kvs_exists) {
-                        ("kvs", true) => Ok(KvsServer {
-                            connection: TcpListener::bind(addr)?,
-                            engine: Box::new(KvStore::open(path)?),
-                            logger: logger.new(o!("kvs" => "existing kvs")),
-                        }),
-                        ("sled", true) => {
-                            error!(logger, "chosen sled, but kvs already exists in directory");
-                            Err(Error::InvalidEngine)
-                        }
-                        ("kvs", false) => {
-                            error!(logger, "chosen kvs, but sled already exists in directory");
-                            Err(Error::InvalidEngine)
-                        }
-                        ("sled", false) => Ok(KvsServer {
-                            connection: TcpListener::bind(addr)?,
-                            engine: Box::new(SledKvsEngine::new(sled::open(path)?)),
-                            logger: logger.new(o!("sled" => "existing sled")),
-                        }),
-                        (_, _) => unreachable!(),
-                    }
-                }
-                (_, true) => unreachable!(),
-            }
-        } else {
-            Ok(KvsServer {
+        match engine.as_str() {
+            "kvs" => Ok(KvsServer {
                 connection: TcpListener::bind(addr)?,
                 engine: Box::new(KvStore::open(path)?),
-                logger: logger.new(o!("kvs" => "default new kvs")),
-            })
+                logger: logger.new(o!("kvs" => "new kvs")),
+            }),
+            "sled" => Ok(KvsServer {
+                connection: TcpListener::bind(addr)?,
+                engine: Box::new(SledKvsEngine::new(sled::open(path)?)),
+                logger: logger.new(o!("sled" => "new sled")),
+            }),
+            _ => unreachable!(),
         }
     }
 

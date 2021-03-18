@@ -1,12 +1,15 @@
 use kvs::Result;
 use kvs::server::KvsServer;
-use slog::{o, warn, Drain};
+use slog::{o, error, warn, Drain};
 use slog_async;
 use slog_term;
 use std::env;
 use std::fs;
 use std::net::SocketAddr;
+use std::process;
 use structopt::StructOpt;
+
+const DEFAULT_ENGINE: &str = "kvs";
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "kvs-server")]
@@ -23,30 +26,50 @@ fn main() -> Result<()> {
     let drain = slog_async::Async::new(drain).build().fuse();
 
     let log = slog::Logger::root(drain, o!("version" => env!("CARGO_PKG_VERSION")));
-    let opts = ServerOpts::from_args();
-
+    let mut opts = ServerOpts::from_args();
     let logger = log.new(o!("addr" => opts.addr.to_string(), "engine" => opts.engine.to_owned()));
 
-    let curr_engine = current_engine()?.and_then(|e| {
-        if true {}
+    let res = current_engine(&logger).and_then(|e| {
+        if opts.engine.is_none() {
+            opts.engine = e.to_owned();
+        }
+        if e.is_some() && opts.engine != e {
+            error!(&logger, "Invalid engine!");
+            process::exit(1);
+        }
+
+        run(opts, &logger)
     });
 
-    let mut server = KvsServer::new(env::current_dir()?, opts.addr, opts.engine, &logger)?;
-
-    server.start()?;
+    if let Err(e) = res {
+        error!(logger, "{}", e);
+        process::exit(1);
+    }
 
     Ok(())
 }
 
-fn current_engine() -> Result<Option<String>> {
-    let engine_file = env::current_dir()?.join("engine)");
+fn run(opts: ServerOpts, logger: &slog::Logger) -> Result<()> {
+    let engine = opts.engine.unwrap_or(DEFAULT_ENGINE.to_owned());
+    let mut server = KvsServer::new(env::current_dir()?, opts.addr, engine.clone(), &logger)?;
+
+    fs::write(env::current_dir()?.join("engine"), format!("{}", engine))?;
+
+    server.start()
+}
+
+fn current_engine(logger: &slog::Logger) -> Result<Option<String>> {
+    let engine_file = env::current_dir()?.join("engine");
     if !engine_file.exists() {
         return Ok(None)
     }
 
     match fs::read_to_string(engine_file)?.as_str() {
-        "Kvs" => Ok(Some("Kvs".to_owned())),
-        "Sled" => Ok(Some("Sled".to_owned())),
-        _ => Ok(None)
+        "kvs" => Ok(Some("kvs".to_owned())),
+        "sled" => Ok(Some("sled".to_owned())),
+        e => {
+            warn!(logger, "Invalid engine: {}", e);
+            Ok(None)
+        }
     }
 }
