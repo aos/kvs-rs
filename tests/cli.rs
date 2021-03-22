@@ -182,7 +182,7 @@ fn cli_wrong_engine() {
             .current_dir(&temp_dir)
             .spawn()
             .unwrap();
-        thread::sleep(Duration::from_secs(3));
+        thread::sleep(Duration::from_secs(1));
         child.kill().expect("server exited before killed");
 
         let mut cmd = Command::cargo_bin("kvs-server").unwrap();
