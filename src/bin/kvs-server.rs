@@ -1,8 +1,6 @@
-use kvs::Result;
 use kvs::server::KvsServer;
-use slog::{o, error, warn, Drain};
-use slog_async;
-use slog_term;
+use kvs::Result;
+use slog::{error, o, warn, Drain};
 use std::env;
 use std::fs;
 use std::net::SocketAddr;
@@ -50,10 +48,10 @@ fn main() -> Result<()> {
 }
 
 fn run(opts: ServerOpts, logger: &slog::Logger) -> Result<()> {
-    let engine = opts.engine.unwrap_or(DEFAULT_ENGINE.to_owned());
+    let engine = opts.engine.unwrap_or_else(|| DEFAULT_ENGINE.to_owned());
     let mut server = KvsServer::new(env::current_dir()?, opts.addr, engine.clone(), &logger)?;
 
-    fs::write(env::current_dir()?.join("engine"), format!("{}", engine))?;
+    fs::write(env::current_dir()?.join("engine"), engine.to_string())?;
 
     server.start()
 }
@@ -61,7 +59,7 @@ fn run(opts: ServerOpts, logger: &slog::Logger) -> Result<()> {
 fn current_engine(logger: &slog::Logger) -> Result<Option<String>> {
     let engine_file = env::current_dir()?.join("engine");
     if !engine_file.exists() {
-        return Ok(None)
+        return Ok(None);
     }
 
     match fs::read_to_string(engine_file)?.as_str() {

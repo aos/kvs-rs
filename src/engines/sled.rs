@@ -15,7 +15,8 @@ impl SledKvsEngine {
 impl KvsEngine for SledKvsEngine {
     fn get(&mut self, key: String) -> Result<Option<String>> {
         let tree: &Tree = &self.0;
-        Ok(tree.get(key)?
+        Ok(tree
+            .get(key)?
             .map(|i_vec| AsRef::<[u8]>::as_ref(&i_vec).to_vec())
             .map(String::from_utf8)
             .transpose()?)
