@@ -6,12 +6,16 @@ use std::fs::{self, DirEntry, File, OpenOptions};
 use std::io::prelude::*;
 use std::io::SeekFrom;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 pub const BUCKET_EXT: &str = "kvstore"; // {current_generation}.kvstore
 const COMPACTION_THRESHOLD: u64 = 1 * 1024 * 1024; // 1 MB
 
+#[derive(Clone)]
+pub struct KvStore(Arc<Mutex<KvStoreShared>>);
+
 /// KvStore holds an in-memory HashMap of <String, String>
-pub struct KvStore {
+pub struct KvStoreShared {
     keydir: HashMap<String, KeyDirEntry>,
     dir: PathBuf,
     active_file: ActiveFile,
@@ -19,87 +23,14 @@ pub struct KvStore {
     uncompacted: u64,
 }
 
-impl KvStore {
-    /// Opens the KvStore at a given path. Return the KvStore
-    pub fn open(dir: impl Into<PathBuf>) -> Result<KvStore> {
-        let current_dir: PathBuf = dir.into();
-        fs::create_dir_all(&current_dir)?;
-
-        let files = Self::get_sorted_files(current_dir.clone())?;
-        let mut keydir = HashMap::new();
-        // Slurp the serialized data from each file into hashmap
-        for entry in &files {
-            let fd = File::open(entry.path())?;
-            let mut it = serde_json::Deserializer::from_reader(&fd).into_iter::<Command>();
-            let mut offset = it.byte_offset() as u64;
-            while let Some(item) = it.next() {
-                match item? {
-                    Command::Set(k, _) => {
-                        keydir.insert(
-                            k,
-                            KeyDirEntry {
-                                file_id: entry.path(),
-                                offset,
-                            },
-                        );
-                    }
-                    Command::Rm(k) => {
-                        keydir.remove(&k);
-                    }
-                }
-                offset = it.byte_offset() as u64;
-            }
-        }
-
-        if let Some(latest) = files.last() {
-            let gen = latest.file_name().to_str().map_or(0, |e| {
-                e.split('.')
-                    .next()
-                    .map_or(0, |v| v.parse::<u64>().unwrap_or(0))
-            });
-            let file_path = PathBuf::from(format!(
-                "{}/{}.{}",
-                current_dir.as_path().display(),
-                gen,
-                BUCKET_EXT
-            ));
-            let mut fd = OpenOptions::new()
-                .read(true)
-                .append(true)
-                .open(&file_path)?;
-            fd.seek(SeekFrom::End(0))?;
-            let mut kv = KvStore {
-                keydir: HashMap::new(),
-                dir: current_dir,
-                active_file: ActiveFile {
-                    fd,
-                    path: file_path,
-                },
-                current_gen: gen,
-                uncompacted: 0,
-            };
-            kv.keydir = keydir;
-
-            Ok(kv)
-        } else {
-            let active_file = ActiveFile::new(current_dir.clone(), 0)?;
-            Ok(KvStore {
-                keydir: HashMap::new(),
-                dir: current_dir,
-                active_file,
-                current_gen: 0,
-                uncompacted: 0,
-            })
-        }
-    }
-
+impl KvStoreShared {
     fn compact(&mut self) -> Result<()> {
         // Naive solution:
         // 1. Mark all current files for deletion
         // 2. Iterate through keydir and write all values to new file(s) with new offsets
         // 3. If step 2 succeeds, delete all marked files
         // 4. Create new active file
-        let files_to_delete = Self::get_sorted_files(self.dir.clone())?;
+        let files_to_delete = get_sorted_files(self.dir.clone())?;
         let new_gen = self.current_gen + 2;
         let mut new_keydir = HashMap::new();
         let mut new_active_file = ActiveFile::new(self.dir.clone(), new_gen)?;
@@ -130,26 +61,6 @@ impl KvStore {
         Ok(())
     }
 
-    fn get_sorted_files(current_dir: PathBuf) -> Result<Vec<DirEntry>> {
-        let mut files: Vec<_> = fs::read_dir(&current_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_type().map_or(false, |ft| ft.is_file())
-                    && e.path().extension() == Some(BUCKET_EXT.as_ref())
-            })
-            .collect();
-        files.sort_by_cached_key(|e| {
-            e.file_name().to_str().map_or(0, |e| {
-                e.split(".")
-                    .next()
-                    .map_or(0, |v| v.parse::<u64>().unwrap_or(0))
-            })
-        });
-        Ok(files)
-    }
-}
-
-impl KvsEngine for KvStore {
     /// Gets an item from the KvStore
     fn get(&mut self, key: String) -> Result<Option<String>> {
         if let Some(entry) = self.keydir.get(&key) {
@@ -201,6 +112,95 @@ impl KvsEngine for KvStore {
     }
 }
 
+impl KvStore {
+    /// Opens the KvStore at a given path. Return the KvStore
+    pub fn open(dir: impl Into<PathBuf>) -> Result<KvStore> {
+        let current_dir: PathBuf = dir.into();
+        fs::create_dir_all(&current_dir)?;
+
+        let files = get_sorted_files(current_dir.clone())?;
+        let mut keydir = HashMap::new();
+        // Slurp the serialized data from each file into hashmap
+        for entry in &files {
+            let fd = File::open(entry.path())?;
+            let mut it = serde_json::Deserializer::from_reader(&fd).into_iter::<Command>();
+            let mut offset = it.byte_offset() as u64;
+            while let Some(item) = it.next() {
+                match item? {
+                    Command::Set(k, _) => {
+                        keydir.insert(
+                            k,
+                            KeyDirEntry {
+                                file_id: entry.path(),
+                                offset,
+                            },
+                        );
+                    }
+                    Command::Rm(k) => {
+                        keydir.remove(&k);
+                    }
+                }
+                offset = it.byte_offset() as u64;
+            }
+        }
+
+        if let Some(latest) = files.last() {
+            let gen = latest.file_name().to_str().map_or(0, |e| {
+                e.split('.')
+                    .next()
+                    .map_or(0, |v| v.parse::<u64>().unwrap_or(0))
+            });
+            let file_path = PathBuf::from(format!(
+                "{}/{}.{}",
+                current_dir.as_path().display(),
+                gen,
+                BUCKET_EXT
+            ));
+            let mut fd = OpenOptions::new()
+                .read(true)
+                .append(true)
+                .open(&file_path)?;
+            fd.seek(SeekFrom::End(0))?;
+            let mut kv = KvStoreShared {
+                keydir: HashMap::new(),
+                dir: current_dir,
+                active_file: ActiveFile {
+                    fd,
+                    path: file_path,
+                },
+                current_gen: gen,
+                uncompacted: 0,
+            };
+            kv.keydir = keydir;
+
+            Ok(KvStore(Arc::new(Mutex::new(kv))))
+        } else {
+            let active_file = ActiveFile::new(current_dir.clone(), 0)?;
+            Ok(KvStore(Arc::new(Mutex::new(KvStoreShared {
+                keydir: HashMap::new(),
+                dir: current_dir,
+                active_file,
+                current_gen: 0,
+                uncompacted: 0,
+            }))))
+        }
+    }
+}
+
+impl KvsEngine for KvStore {
+    fn set(&self, key: String, value: String) -> Result<()> {
+        self.0.lock().unwrap().set(key, value)
+    }
+
+    fn get(&self, key: String) -> Result<Option<String>> {
+        self.0.lock().unwrap().get(key)
+    }
+
+    fn remove(&self, key: String) -> Result<()> {
+        self.0.lock().unwrap().remove(key)
+    }
+}
+
 #[derive(Clone)]
 struct KeyDirEntry {
     file_id: PathBuf,
@@ -230,4 +230,22 @@ impl ActiveFile {
 
         Ok(ActiveFile { fd, path })
     }
+}
+
+fn get_sorted_files(current_dir: PathBuf) -> Result<Vec<DirEntry>> {
+    let mut files: Vec<_> = fs::read_dir(&current_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_type().map_or(false, |ft| ft.is_file())
+                && e.path().extension() == Some(BUCKET_EXT.as_ref())
+        })
+        .collect();
+    files.sort_by_cached_key(|e| {
+        e.file_name().to_str().map_or(0, |e| {
+            e.split(".")
+                .next()
+                .map_or(0, |v| v.parse::<u64>().unwrap_or(0))
+        })
+    });
+    Ok(files)
 }

@@ -1,3 +1,4 @@
+use rayon::ThreadPoolBuildError;
 use std::io;
 use std::net::AddrParseError;
 use std::time::SystemTimeError;
@@ -27,6 +28,8 @@ pub enum Error {
     InvalidEngine,
     #[error("Unspecified")]
     Unspecified,
+    #[error(transparent)]
+    Rayon(#[from] ThreadPoolBuildError),
 }
 
 /// The Result type encapsulates standard result
