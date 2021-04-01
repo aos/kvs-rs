@@ -56,28 +56,27 @@ fn run(opts: ServerOpts, logger: &slog::Logger) -> Result<()> {
     match engine.as_str() {
         "kvs" => run_with(
             KvStore::open(env::current_dir()?)?,
-            //logger.new(o!("kvs" => "new kvs")),
             SharedQueueThreadPool::new(4)?,
+            logger.new(o!("kvs" => "new kvs")),
             opts.addr,
         ),
         "sled" => run_with(
             SledKvsEngine::new(sled::open(env::current_dir()?)?),
-            //logger.new(o!("sled" => "new sled")),
             SharedQueueThreadPool::new(4)?,
+            logger.new(o!("sled" => "new sled")),
             opts.addr,
         ),
         _ => unreachable!(),
-    };
-
-    Ok(())
+    }
 }
 
 fn run_with<E: KvsEngine, P: ThreadPool>(
     engine: E,
     thread_pool: P,
+    logger: slog::Logger,
     addr: SocketAddr,
 ) -> Result<()> {
-    let mut server = KvsServer::new(engine, thread_pool);
+    let mut server = KvsServer::new(engine, thread_pool, logger);
     server.start(addr)
 }
 
