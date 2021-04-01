@@ -1,6 +1,6 @@
 use crate::Result;
 
-pub trait KvsEngine {
+pub trait KvsEngine: Clone + Send + 'static {
     fn get(&self, key: String) -> Result<Option<String>>;
 
     fn set(&self, key: String, value: String) -> Result<()>;

@@ -1,4 +1,6 @@
+use kvs::engines::{KvStore, KvsEngine, SledKvsEngine};
 use kvs::server::KvsServer;
+use kvs::thread_pool::{SharedQueueThreadPool, ThreadPool};
 use kvs::Result;
 use slog::{error, o, warn, Drain};
 use std::env;
@@ -49,11 +51,34 @@ fn main() -> Result<()> {
 
 fn run(opts: ServerOpts, logger: &slog::Logger) -> Result<()> {
     let engine = opts.engine.unwrap_or_else(|| DEFAULT_ENGINE.to_owned());
-    let mut server = KvsServer::new(env::current_dir()?, opts.addr, engine.clone(), &logger)?;
-
     fs::write(env::current_dir()?.join("engine"), engine.to_string())?;
 
-    server.start()
+    match engine.as_str() {
+        "kvs" => run_with(
+            KvStore::open(env::current_dir()?)?,
+            //logger.new(o!("kvs" => "new kvs")),
+            SharedQueueThreadPool::new(4)?,
+            opts.addr,
+        ),
+        "sled" => run_with(
+            SledKvsEngine::new(sled::open(env::current_dir()?)?),
+            //logger.new(o!("sled" => "new sled")),
+            SharedQueueThreadPool::new(4)?,
+            opts.addr,
+        ),
+        _ => unreachable!(),
+    };
+
+    Ok(())
+}
+
+fn run_with<E: KvsEngine, P: ThreadPool>(
+    engine: E,
+    thread_pool: P,
+    addr: SocketAddr,
+) -> Result<()> {
+    let mut server = KvsServer::new(engine, thread_pool);
+    server.start(addr)
 }
 
 fn current_engine(logger: &slog::Logger) -> Result<Option<String>> {

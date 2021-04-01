@@ -2,7 +2,7 @@
 
 mod client;
 pub mod command;
-mod engines;
+pub mod engines;
 mod error;
 pub mod server;
 pub mod thread_pool;
